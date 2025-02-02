@@ -1,8 +1,8 @@
 from twilio.rest import Client
 
 # Twilio credentials 
-account_sid = 'ACc87187ba9097d7d7463e09bba88e0e51'
-auth_token = '44401198fd0aa7cef05ac3e2c5cfe6ba'
+account_sid = ''
+auth_token = ''
 twilio_number = '+17178768591'  
 recipient_number = '+254111608403'  
 
