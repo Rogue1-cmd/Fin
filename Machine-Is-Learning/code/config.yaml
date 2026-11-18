@@ -1,0 +1,13 @@
+path: /home/gari/Desktop/Machine-Is-Learning/OIDv6_ToolKit/OID/Dataset
+train: /home/gari/Desktop/Machine-Is-Learning/OIDv6_ToolKit/OID/Dataset/train/Lion
+val: /home/gari/Desktop/Machine-Is-Learning/OIDv6_ToolKit/OID/Dataset/validation/Lion
+
+#Classes
+names:
+  0: Lion
+
+  #1: Elephant
+  #2: Giraffe
+  #3: Hippopotamus
+  #4: Hyenas
+
