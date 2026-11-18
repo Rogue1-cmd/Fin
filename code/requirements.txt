@@ -2,3 +2,5 @@ numpy
 pandas
 matplotlib
 africastalking
+ultralytics
+opencv-python
