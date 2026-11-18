@@ -1,7 +1,8 @@
 import cv2
 from ultralytics import YOLO
 from camera_input import get_rpi_camera_stream
-import subprocess  # To run the SMS script
+import time
+from smsalert import send_sms
 
 # Load the trained YOLOv8 model
 model = YOLO('/home/gari/Desktop/Fin/detect/train/weights/best.pt')
@@ -20,11 +21,9 @@ fps = int(cap.get(cv2.CAP_PROP_FPS))
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out = cv2.VideoWriter('/home/gari/Desktop/Fin/test_videos/annotated_output.mp4', fourcc, fps, (width, height))
 
-# Flag to avoid sending multiple SMS for the same detection
-sms_sent = False
-
-# Path to your SMS script
-sms_script_path = '/twilio_sms_alert.py'
+# Minimum seconds between SMS alerts, so one sighting doesn't send a message per frame
+ALERT_COOLDOWN_S = 300
+last_alert_time = None
 
 # Process the video frame by frame
 while cap.isOpened():
@@ -37,16 +36,13 @@ while cap.isOpened():
 
     # Check if a lion is detected in the frame
     for box in results[0].boxes:
-        if results[0].names[int(box.cls[0])] == 'lion':  
+        if results[0].names[int(box.cls[0])].lower() == 'lion':
             print("Lion detected!")
-            if not sms_sent:  
-                # Call the SMS script
-                try:
-                    subprocess.run(['python3', sms_script_path], check=True)
-                    print("SMS script executed successfully.")
-                except subprocess.CalledProcessError as e:
-                    print(f"Error executing SMS script: {e}")
-                sms_sent = True
+            now = time.monotonic()
+            if last_alert_time is None or now - last_alert_time >= ALERT_COOLDOWN_S:
+                # Only start the cooldown if the SMS was actually sent, so failures are retried
+                if send_sms('lion'):
+                    last_alert_time = now
             break
 
     # Annotate the frame with detection results
