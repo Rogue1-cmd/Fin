@@ -1,6 +1,6 @@
 # Wildlife Detection and Notification System
 
-Computer vision system that detects lions in a camera feed and sends an SMS alert to residents and authorities. Built on YOLOv8 and OpenCV, targeting a Raspberry Pi with a camera module.
+Detects lions in a camera feed, sends an SMS alert, and streams the feed to a password-protected web app. Built on YOLOv8 and OpenCV for a Raspberry Pi.
 
 BSc Electronic and Computer Engineering final year project, JKUAT (2025).
 
@@ -9,22 +9,17 @@ BSc Electronic and Computer Engineering final year project, JKUAT (2025).
 ## How it works
 
 ```
-Camera / video → OpenCV frames → YOLOv8 lion detection → SMS alert (Africa's Talking)
+Camera → OpenCV → YOLOv8 lion detection ─┬─▶ SMS alert (Africa's Talking)
+                                         └─▶ Web viewer (live video, alerts, clips)
 ```
 
-The model is YOLOv8n, fine-tuned on lion images from Open Images v6.
-
-## Results
-
-Trained 20 epochs at 640×640, batch 16 (`runs/detect/train4`):
+The model is YOLOv8n, fine-tuned on lion images from Open Images v6. Trained 20 epochs at 640×640 (`runs/detect/train4`):
 
 | Precision | Recall | mAP50 | mAP50-95 |
 |-----------|--------|-------|----------|
 | 0.79      | 0.63   | 0.68  | 0.35     |
 
-Limited by training compute. See the report for details and recommendations.
-
-## Run locally (Linux / macOS / Windows)
+## Run locally
 
 Needs Python 3.9+.
 
@@ -33,35 +28,66 @@ git clone --depth 1 https://github.com/Rogue1-cmd/Fin.git && cd Fin
 python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r code/requirements.txt
 
-# Try it on a sample video (no SMS needed)
-python code/prediction_alert.py --source test_videos/lions_rongai.mp4
-
-# Or use a laptop / USB webcam
-python code/prediction_alert.py --source 0
+python code/prediction_alert.py --source test_videos/lions_rongai.mp4   # sample video
+python code/prediction_alert.py --source 0                              # webcam
 ```
 
-A preview window opens; press `q` to quit. Add `--output result.mp4` to save the annotated video.
+Press `q` to quit. Add `--output result.mp4` to save the annotated video.
 
 ## Run on a Raspberry Pi
 
-Target: Raspberry Pi 4B, 64-bit Raspberry Pi OS. Inference is slow on a Pi, so use a smaller image size.
+Raspberry Pi 4B, 64-bit Raspberry Pi OS.
 
 ```bash
 sudo apt update && sudo apt install -y git python3-venv python3-opencv gstreamer1.0-libcamera
 git clone --depth 1 https://github.com/Rogue1-cmd/Fin.git && cd Fin
 python3 -m venv --system-site-packages venv && source venv/bin/activate
 pip install -r code/requirements.txt
-pip uninstall -y opencv-python   # use the apt OpenCV, which has Pi camera (GStreamer) support
+pip uninstall -y opencv-python   # use the apt OpenCV (has Pi camera support)
 
-# Pi camera module, no monitor attached
 python code/prediction_alert.py --source picam --headless --imgsz 320
 ```
 
-Using a USB webcam instead? Skip the `pip uninstall` and use `--source 0`. Connect over SSH and add `--headless` when there is no display.
+USB webcam instead: skip the `pip uninstall` and use `--source 0`.
+
+## Web viewer
+
+Log in from anywhere to watch the live feed, see lion alerts as they happen, and browse saved snapshots and clips.
+
+```
+Pi (prediction_alert.py) ──WSS──▶ Go server on a VPS ──HTTPS──▶ browser (React)
+```
+
+The Pi connects outward, so no port forwarding is needed. It uploads video only while someone is watching (about 2–4 Mbps).
+
+**1. Deploy** on a VPS with Docker and a domain pointing at it:
+
+```bash
+cp .env.example .env     # set DOMAIN, ADMIN_USER, JWT_SECRET, DEVICE_KEY
+openssl rand -hex 32     # use for JWT_SECRET, and again for DEVICE_KEY
+docker compose build
+docker compose run --rm --no-deps --entrypoint hashpw server 'your password'   # → ADMIN_PASSWORD_HASH
+docker compose up -d
+```
+
+Caddy gets the HTTPS certificate automatically. Open `https://your-domain` and sign in.
+
+**2. Point the Pi at it:**
+
+```bash
+python code/prediction_alert.py --source picam --headless --imgsz 320 \
+  --server wss://your-domain/ingest --device-key <DEVICE_KEY>
+```
+
+(`STREAM_URL` and `DEVICE_KEY` environment variables work too.)
+
+**Storage:** each alert saves a snapshot and a 10-second clip. They are deleted after 14 days or once they exceed 2 GB (`RETENTION_DAYS`, `MAX_MEDIA_MB`; `0` = no limit).
+
+**Develop:** run the server with `COOKIE_SECURE=false` and the variables from `.env.example`, then `cd web && npm run dev`. Tests: `cd server && go test ./...`.
 
 ## SMS alerts
 
-Alerts are sent through [Africa's Talking](https://africastalking.com). Set these before running, otherwise detections are printed but no SMS is sent:
+Sent through [Africa's Talking](https://africastalking.com). Without these set, detections are printed but no SMS is sent:
 
 ```bash
 export AT_USERNAME=sandbox            # your Africa's Talking username
@@ -70,7 +96,7 @@ export AT_RECIPIENTS="+2547XXXXXXXX"  # comma-separated
 export AT_SENDER_ID=                  # optional
 ```
 
-Alerts are limited to one every 5 minutes. Never commit your API key.
+At most one SMS every 5 minutes. Never commit your API key.
 
 ## Options
 
@@ -82,20 +108,26 @@ Alerts are limited to one every 5 minutes. Never commit your API key.
 | `--imgsz` | `640` | Inference size (`320` is faster on a Pi) |
 | `--output` | none | Save annotated video |
 | `--headless` | off | No preview window |
+| `--server` | none | Web viewer URL (`wss://…/ingest`) |
+| `--device-key` | none | Shared secret for the web viewer |
+| `--stream-fps` | `8` | Frames per second uploaded |
+| `--stream-alert-cooldown` | `300` | Seconds between alerts sent to the web viewer |
 
 ## Repository
 
 | Path | Contents |
 |------|----------|
-| `code/` | Inference and alert scripts |
+| `code/` | Detection, SMS and streaming scripts |
+| `server/` | Go web server |
+| `web/` | React web app |
 | `runs/detect/train4/` | Final training run: weights, curves, metrics |
-| `test_videos/` | Sample lion footage and annotated output |
+| `test_videos/` | Sample lion footage |
 | `docs/` | Final report, proposal, progress report format |
 | `Machine-Is-Learning/` | Training experiments and dataset tooling |
 
 ## Known limitations
 
-- **Weak detection confidence.** The included weights score lions low: on validation images they detect 25 of 35 at `--conf 0.1`, 10 of 35 at 0.25 and none at 0.5. The default is 0.15, so expect missed lions and some false alarms. Retraining with more data and epochs is the main improvement.
-- Only lions are detected. Hyenas and other species are future work.
-- The Pi camera path has not been tested on hardware in this repo's current state.
+- **Low detection confidence.** On validation images the weights find a lion in 25 of 35 at `--conf 0.1`, 10 of 35 at 0.25, and none at 0.5. Expect missed lions and some false alarms at the 0.15 default. Retraining with more data and epochs is the main fix.
+- Lions only. Hyenas and other species are future work.
+- The Pi camera path and a real VPS deployment are untested. The web viewer was tested locally and in Docker.
 - The report describes SMS via Twilio. The code now uses Africa's Talking.

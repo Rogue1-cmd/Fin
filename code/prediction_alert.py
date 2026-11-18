@@ -1,12 +1,17 @@
-"""Detect lions in a video source and send an SMS alert (Africa's Talking).
+"""Detect lions in a video source, send an SMS alert (Africa's Talking) and optionally
+stream the annotated feed to the web viewer.
 
 Examples:
     python code/prediction_alert.py --source test_videos/lions_rongai.mp4
     python code/prediction_alert.py --source 0                 # USB / laptop webcam
     python code/prediction_alert.py --source picam --headless  # Raspberry Pi camera
+    python code/prediction_alert.py --source picam --headless \\
+        --server wss://your-domain/ingest --device-key $DEVICE_KEY
 """
 import argparse
+import os
 import time
+from datetime import datetime, timezone
 
 import cv2
 from ultralytics import YOLO
@@ -36,7 +41,22 @@ def main():
     p.add_argument("--imgsz", type=int, default=640, help="inference size (try 320 on a Raspberry Pi)")
     p.add_argument("--output", help="optional path to save an annotated video (.mp4)")
     p.add_argument("--headless", action="store_true", help="no preview window (for SSH / no display)")
+    p.add_argument("--server", default=os.environ.get("STREAM_URL"),
+                   help="web viewer ingest URL, e.g. wss://host/ingest (env STREAM_URL)")
+    p.add_argument("--device-key", default=os.environ.get("DEVICE_KEY"),
+                   help="shared secret for the web viewer (env DEVICE_KEY)")
+    p.add_argument("--stream-fps", type=int, default=8, help="frames per second uploaded to the web viewer")
+    p.add_argument("--stream-alert-cooldown", type=int, default=300,
+                   help="minimum seconds between alerts (snapshot + clip) sent to the web viewer")
     args = p.parse_args()
+
+    stream = None
+    if args.server:
+        if not args.device_key:
+            raise SystemExit("--device-key (or DEVICE_KEY) is required with --server")
+        from stream_client import StreamClient
+        stream = StreamClient(args.server, args.device_key, fps=args.stream_fps)
+        stream.start()
 
     model = YOLO(args.model)
     cap = open_source(args.source)
@@ -49,6 +69,7 @@ def main():
         out = cv2.VideoWriter(args.output, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
     last_alert_time = None
+    last_stream_alert = None
     try:
         while cap.isOpened():
             ret, frame = cap.read()
@@ -57,16 +78,26 @@ def main():
 
             results = model.predict(source=frame, conf=args.conf, imgsz=args.imgsz, verbose=False)
             result = results[0]
+            annotated = result.plot()
 
-            if any(result.names[int(box.cls[0])].lower() == "lion" for box in result.boxes):
+            lion_confs = [float(box.conf[0]) for box in result.boxes
+                          if result.names[int(box.cls[0])].lower() == "lion"]
+            if lion_confs:
                 print("Lion detected!")
                 now = time.monotonic()
                 if last_alert_time is None or now - last_alert_time >= ALERT_COOLDOWN_S:
                     # Only start the cooldown if the SMS was actually sent, so failures are retried
                     if send_sms("lion"):
                         last_alert_time = now
+                        if stream:
+                            stream.update_status(last_sms=datetime.now(timezone.utc).isoformat())
+                if stream and (last_stream_alert is None or now - last_stream_alert >= args.stream_alert_cooldown):
+                    stream.push_frame(annotated)
+                    if stream.send_alert(annotated, max(lion_confs)):
+                        last_stream_alert = now
 
-            annotated = result.plot()
+            if stream:
+                stream.push_frame(annotated)
             if out:
                 out.write(annotated)
             if not args.headless:
@@ -76,6 +107,10 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if stream:
+            stream.update_status(camera_ok=False)
+            time.sleep(0.5)  # let the last status go out
+            stream.stop()
         cap.release()
         if out:
             out.release()

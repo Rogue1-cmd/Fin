@@ -4,3 +4,4 @@ matplotlib
 africastalking
 ultralytics
 opencv-python
+websocket-client

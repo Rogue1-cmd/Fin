@@ -1,0 +1,33 @@
+# Web viewer for the wildlife detector. Copy .env.example to .env, fill it in, then:
+#   docker compose up -d --build
+services:
+  server:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRUST_PROXY: "1" # behind Caddy
+    volumes:
+      - data:/data
+    expose:
+      - "8080"
+
+  caddy: # automatic HTTPS for $DOMAIN
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:

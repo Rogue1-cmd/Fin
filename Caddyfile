@@ -1,0 +1,5 @@
+{$DOMAIN} {
+	reverse_proxy server:8080 {
+		flush_interval -1 # don't buffer the live video / event streams
+	}
+}
